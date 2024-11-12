@@ -1,71 +1,94 @@
-from time import sleep
-from threading import Thread
-from hal import hal_keypad as keypad
-from hal import hal_lcd as LCD
-from hal import hal_buzzer as buzzer
+import time
+from hal.hal_lcd import lcd  # Importing the LCD class from hal_lcd
+from hal.hal_keypad import init as keypad_init, get_key  # Importing keypad functions
+import RPi.GPIO as GPIO
 
-lcd = LCD.lcd()
-correct_pin = "1234"
-entered_pin = ""
+# Constants
+CORRECT_PIN = "1234"
+MAX_ATTEMPTS = 3
+BUZZER_PIN = 18  # GPIO pin for the buzzer
+
+# State variables
+input_pin = ""
 attempts = 0
+lcd_display = lcd()
 
-def display_safe_lock():
-    lcd.lcd_clear()
-    lcd.lcd_display_string("Safe Lock", 1)
-    lcd.lcd_display_string("Enter PIN: ", 2)
+def display_message(line1, line2=""):
+    """
+    Display a message on the LCD.
+    """
+    lcd_display.lcd_clear()
+    lcd_display.lcd_display_string(line1, line=1)
+    lcd_display.lcd_display_string(line2, line=2)
 
-def display_wrong_pin():
-    lcd.lcd_clear()
-    lcd.lcd_display_string("Wrong PIN", 1)
-    buzzer.turn_on_with_timer(1)
+def activate_buzzer():
+    """
+    Activate the buzzer for 1 second to indicate a wrong PIN entry.
+    """
+    GPIO.output(BUZZER_PIN, GPIO.HIGH)
+    time.sleep(1)
+    GPIO.output(BUZZER_PIN, GPIO.LOW)
 
-def display_safe_unlocked():
-    lcd.lcd_clear()
-    lcd.lcd_display_string("Safe Unlocked", 1)
+def handle_keypress(key):
+    """
+    Callback function to handle keypad input.
+    """
+    global input_pin, attempts
+    
+    # Check if the safe is disabled (REQ-05)
+    if attempts >= MAX_ATTEMPTS:
+        display_message("Safe Disabled", "")
+        return
 
-def display_safe_disabled():
-    lcd.lcd_clear()
-    lcd.lcd_display_string("Safe Disabled", 1)
+    # Handle numeric key input (0-9) (REQ-02)
+    if isinstance(key, int) or key == 0:
+        input_pin += str(key)
+        display_message("Safe Lock", "Enter PIN: " + "*" * len(input_pin))
 
-def key_pressed(key):
-    global entered_pin, attempts
-
-    key = str(key)
-    print(f"Key pressed: '{key}'")
-
-    # Add key to entered PIN and display asterisk after "Enter PIN: "
-    if len(entered_pin) < 4:
-        entered_pin += key
-        lcd.lcd_display_string("Enter PIN: ", 2)  # Display prompt on line 2
-        lcd.lcd_display_string("*" * len(entered_pin), 2, pos=10)  # Display asterisks starting at position 10
-
-    # Check if the PIN is complete
-    if len(entered_pin) == 4:
-        if entered_pin == correct_pin:
-            display_safe_unlocked()
-            entered_pin = ""
+    # Check PIN if '#' is pressed (REQ-03 and REQ-04)
+    elif key == "#":
+        if input_pin == CORRECT_PIN:
+            # Correct PIN entered; display "Safe Unlocked" (REQ-03)
+            display_message("Safe Unlocked", "")
+            input_pin = ""  # Reset input after unlocking
+            attempts = 0    # Reset attempts on successful unlock
         else:
+            # Incorrect PIN entered; show "Wrong PIN" and activate buzzer (REQ-04)
             attempts += 1
-            entered_pin = ""
-            if attempts >= 3:
-                display_safe_disabled()
+            if attempts >= MAX_ATTEMPTS:
+                display_message("Safe Disabled", "")  # REQ-05
             else:
-                display_wrong_pin()
-                display_safe_lock()
+                display_message("Wrong PIN", "")  # REQ-04
+                activate_buzzer()
+            input_pin = ""  # Reset input after incorrect attempt
+
+    # Clear input if '*' is pressed (REQ-02 for clearing input)
+    elif key == "*":
+        input_pin = ""
+        display_message("Safe Lock", "Enter PIN: ")
 
 def main():
-    display_safe_lock()
-    keypad.init(key_pressed)
-    buzzer.init()
+    """
+    Main function to initialize the keypad, LCD, and buzzer, and start listening for input.
+    """
+    # Initialize GPIO for the buzzer
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(BUZZER_PIN, GPIO.OUT)
+    GPIO.output(BUZZER_PIN, GPIO.LOW)  # Ensure the buzzer is initially off
 
-    keypad_thread = Thread(target=keypad.get_key)
-    keypad_thread.start()
+    # Display the initial message as per REQ-01
+    display_message("Safe Lock", "Enter PIN: ")
 
+    # Initialize the keypad with handle_keypress as the callback function
+    keypad_init(handle_keypress)
+
+    # Run the keypad scanning function continuously
     try:
-        while True:
-            sleep(1)
+        get_key()  # This will keep the program running to handle keypad input
     except KeyboardInterrupt:
-        print("Program exited cleanly.")
+        print("Exiting Program")
+    finally:
+        GPIO.cleanup()  # Clean up GPIO on exit
 
 if __name__ == "__main__":
     main()

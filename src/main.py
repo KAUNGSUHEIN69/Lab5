@@ -1,24 +1,42 @@
-from hal import hal_adc as adc  
-from hal import hal_servo
+from threading import Thread
+from hal import hal_keypad as keypad
+from hal import hal_lcd as LCD
+import led_control
 from time import sleep
 
-# Map ADC value to servo angle (0-180 degrees)
-def adc_to_servo_angle(adc_value):
-    # Assuming adc_value ranges from 0 to 1023
-    angle = (adc_value * 180) / 1023
-    return angle
+# Initialize the LCD
+lcd = LCD.lcd()
+lcd.lcd_clear()
+current_mode = None
+
+def key_pressed(key):
+    global current_mode
+    if key == 1:  
+        current_mode = "Blink"
+        lcd.lcd_clear()
+        lcd.lcd_display_string("LED Control", 1)
+        lcd.lcd_display_string("Blink LED", 2)
+        led_control.set_blinking_mode() 
+
+    elif key == 0:  
+        current_mode = "Off"
+        lcd.lcd_clear()
+        lcd.lcd_display_string("LED Control", 1)
+        lcd.lcd_display_string("OFF LED", 2)
+        led_control.stop_blinking()  
 
 def main():
-    hal_servo.init()  # Initialize the servo GPIO
-    adc.init()  # Initialize the ADC
+    # Display the initial text on the LCD as per REQ-01
+    lcd.lcd_display_string("LED Control", 1)
+    lcd.lcd_display_string("0:Off 1:Blink", 2)
+    keypad.init(key_pressed)
+    keypad_thread = Thread(target=keypad.get_key)
+    keypad_thread.start()
 
-    while True:
-            adc_value = adc.get_adc_value(1)
-            servo_angle = adc_to_servo_angle(adc_value)
-            hal_servo.set_servo_position(servo_angle)  # Set servo position based on angle
-            print(f"ADC Value: {adc_value}, Servo Angle: {servo_angle}")
-            sleep(0.1)
-    
+    led_control.led_control_init()
+
+  
+
 # Main entry point
-if __name__ == "__main__":
+if __name__ == "__main__":  
     main()
